@@ -40,7 +40,7 @@ todo;
       function preload() {
           game.stage.backgroundColor = '#a5d5ff';
 
-          game.load.baseURL = 'http://localhost/phaser/';
+          game.load.baseURL = window.location.href.substring(0, window.location.href.lastIndexOf('/')) + "/";
           game.load.crossOrigin = 'anonymous';
 
           game.load.image('player', 'dude.png');

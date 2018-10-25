@@ -1,0 +1,326 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <title></title>
+        <script src="phaser.js"></script>
+    </head>
+    <body>
+
+    <script type="text/javascript">
+/**
+todo;
+- 3 player hitboxes to detect touching blocks - l, r, b
+- on action button; touching b gets 'seeded'
+- seeded block grows new block above, pushes player up when made
+- seed types;
+  - fruit tree:
+     - new block above every x seconds
+     - destroying one gives a random seed
+
+**/
+
+    window.onload = function() {
+
+      var config = {
+          width: 800,
+          height: 600,
+          renderer: Phaser.AUTO,
+          antialias: false,
+          multiTexture: true,
+          state: {
+              preload: preload,
+              create: create,
+              update: update,
+              render: render
+          }
+      };
+      var game = new Phaser.Game(config);
+
+      function preload() {
+          game.stage.backgroundColor = '#a5d5ff';
+
+          game.load.baseURL = 'http://localhost/phaser/';
+          game.load.crossOrigin = 'anonymous';
+
+          game.load.image('player', 'dude.png');
+          game.load.spritesheet('playersprite', 'dude-anim.png', 16, 16, 5);
+          game.load.image('platform', 'platform.png');
+          game.load.image('block', 'block.png');
+
+      }
+
+      var player;
+      var blocks;
+      var cursors;
+      var jumpButton;
+      var digButton;
+      var actionButton;
+      var blockDestroyCooldown;
+      var hitboxes;
+      var hitboxL;
+      var hitboxR;
+      var hitboxB;
+
+      var activeBlock;
+      var activeBlockl;
+      var activeBlockr;
+
+      var activeBlocklTimer;
+      var activeBlocklWindup;
+      var destroyblockLallowed;
+      var activeBlockrTimer;
+      var activeBlockrWindup;
+      var destroyblockRallowed;
+
+      function create() {
+
+          game.physics.startSystem(Phaser.Physics.P2JS);
+          game.physics.p2.setImpactEvents(true);
+          game.physics.p2.gravity.y = 1000;
+          game.physics.p2.restitution = 0.1;
+          game.physics.p2.friction = 0.1;
+
+          playerCollisionGroup = game.physics.p2.createCollisionGroup();
+          blockCollisionGroup = game.physics.p2.createCollisionGroup();
+
+          game.physics.p2.updateBoundsCollisionGroup();
+
+          //game.physics.setBoundsToWorld();
+          player = game.add.sprite(350, 100, 'player');
+          player.scale.x *= 2;
+          player.scale.y *= 2;
+          player.animations.add('walk');
+          // player.animations.play('walk', 5, true);
+          //  player.animations.stop(null, true);
+          player.anchor.x = 0.5;
+          player.anchor.y = 0.5;
+          //game.physics.arcade.enable(player);
+          game.physics.p2.enable(player,false);
+          player.body.setCollisionGroup(blockCollisionGroup);
+          player.body.collides([blockCollisionGroup, playerCollisionGroup]);
+          player.body.fixedRotation = true;
+          //player.body.setSize(5, 10, 8, 5);
+          player.body.collideWorldBounds = false;
+          player.checkWorldBounds = true;
+          //player.body.gravity.y = 1000;
+          player.events.onOutOfBounds.add(reset, this);
+
+          //player hitboxes
+          hitboxes = game.add.group();
+          hitboxes.enableBody = true;
+          player.addChild(hitboxes);
+          var hbSize = player.width / 4;
+          hitboxL = hitboxes.create(0, 0, null);
+          hitboxL.name = "hitboxL";
+          hitboxL.body.setSize(hbSize, hbSize, -player.width / 2 - (hbSize / 2), -hbSize / 2);
+          hitboxR = hitboxes.create(0, 0, null);
+          hitboxR.name = "hitboxR";
+          hitboxR.body.setSize(hbSize, hbSize, (player.width / 2) - (hbSize / 2), -hbSize / 2);
+          hitboxB = hitboxes.create(0, 0, null);
+          hitboxB.name = "hitboxB";
+          hitboxB.body.setSize(hbSize, hbSize, -hbSize / 2, (player.height / 2) - (hbSize / 2));
+
+          generateBlocks();
+
+          cursors = game.input.keyboard.createCursorKeys();
+          jumpButton = game.input.keyboard.addKey(Phaser.Keyboard.UP);
+          digButton = game.input.keyboard.addKey(Phaser.Keyboard.DOWN);
+          actionButton = game.input.keyboard.addKey(Phaser.Keyboard.SPACE);
+
+      }
+
+      function reset(a){
+        player.reset(350,100);
+        blocks.destroy();
+        generateBlocks();
+      }
+
+      function update () {
+          var canJump = checkIfCanJump();
+
+          blocks.forEach(function(block){
+            block.alpha = 1;
+          });
+
+          activeBlockl = null;
+          activeBlockr = null;
+          activeBlock = null;
+
+          // game.physics.arcade.overlap(hitboxes, blocks, function(a,b){
+          //   //destroyblockRallowed = false;
+          //   if(a.name == 'hitboxL'){
+          //     activeBlockl = b;
+          //     activeBlockl.alpha = 0.8;
+          //   }
+          //   else if(a.name == 'hitboxR'){
+          //     activeBlockr = b;
+          //     activeBlockr.alpha = 0.8;
+          //   }
+          //   else if(a.name == 'hitboxB'){
+          //     activeBlock = b;
+          //     activeBlock.alpha = 0.8;
+          //   }
+          // }, null, this);
+
+          // game.physics.arcade.collide(player, blocks, function(a,b){
+          // }, null, this);
+
+          if(!activeBlockr){
+            destroyblockRallowed = false;
+          }
+          if(!activeBlockl){
+            destroyblockLallowed = false;
+          }
+
+          if (!cursors.left.isDown && !cursors.right.isDown){
+              if(player.body.velocity.x > 0 || player.body.velocity.x < 0){
+                  if(player.body.velocity.x < 0.1 && player.body.velocity.x > -0.1){
+                      player.body.velocity.x = 0;
+                  }
+                  else{
+                      player.body.velocity.x = player.body.velocity.x * 0.9;
+                  }
+              }
+          }
+          if(player.body.velocity.x !== 0
+          || player.body.velocity.y !== 0){
+            player.animations.play('walk', 5, true);
+          }
+          else{
+            player.animations.stop(null, true);
+          }
+
+          if (cursors.left.isDown)
+          {
+              if(player.body.velocity.x > -250){
+                  player.body.velocity.x -= 10;
+              }
+              if(canJump){
+                  if(activeBlockl && !activeBlocklWindup){
+                    activeBlocklWindup = true;
+                    activeBlocklTimer = game.time.events.loop(
+                      150,
+                      function(){
+                        activeBlocklWindup = false;
+                        destroyblockLallowed = true;
+                        game.time.events.remove(activeBlocklTimer);
+                      },
+                      this
+                    );
+                  }
+                  if(activeBlockl && destroyblockLallowed){
+                    destroyblockLallowed = false;
+                    activeBlockl.destroy();
+                  }
+              }
+          }
+          else if (cursors.right.isDown)
+          {
+              if(player.body.velocity.x < 250){
+                  player.body.velocity.x += 10;
+              }
+
+              if(canJump){
+                  if(activeBlockr && !activeBlockrWindup){
+                    activeBlockrWindup = true;
+                    activeBlockrTimer = game.time.events.loop(
+                      150,
+                      function(){
+                        activeBlockrWindup = false;
+                        destroyblockRallowed = true;
+                        game.time.events.remove(activeBlockrTimer);
+                      },
+                      this
+                    );
+                  }
+                  if(activeBlockr && destroyblockRallowed){
+                    destroyblockRallowed = false;
+                    activeBlockr.destroy();
+                  }
+              }
+
+          }
+
+          if (jumpButton.isDown && (canJump))
+          {
+              player.body.velocity.y = -350;
+          }
+
+          if (digButton.isDown && (canJump)
+            && activeBlock
+            && !blockDestroyCooldown)
+          {
+              blockDestroyCooldown = true;
+              activeBlock.destroy();
+              blockDestroyCooldownTimer = game.time.events.loop(
+                150,
+                function(){
+                  blockDestroyCooldown = false;
+                  game.time.events.remove(blockDestroyCooldownTimer);
+                },
+                this
+              );
+          }
+      }
+
+      function render () {
+
+          game.debug.bodyInfo(player, 32, 32);
+
+         game.debug.body(hitboxL);
+         game.debug.body(hitboxR);
+         game.debug.body(hitboxB);
+
+
+      }
+
+      //game logic
+      function generateBlocks() {
+          blocks = game.add.group();
+          blocks.enableBody = true;
+          blocks.physicsBodyType = Phaser.Physics.P2JS;
+
+          var width = height = 8;
+          var blockSize = 32;
+          var startX = (game.width / 2) - ((width*blockSize) / 2);
+          var startY = (game.width / 2) - ((width*blockSize) / 2);
+
+          for(var x = 1; x<width; ++x){
+            for(var y = 1; y<height; ++y){
+              if(x !== 2 || y == height-1){
+                var block = blocks.create(
+                  startX + (x*blockSize),
+                  startY + (y*blockSize),
+                  'block'
+                );
+                block.tint = Math.random() * 0xffffff;
+                block.body.setCollisionGroup(blockCollisionGroup);
+                block.body.collides([blockCollisionGroup, playerCollisionGroup])
+                block.body.static = true;
+              }
+            }
+          }
+          blocks.setAll('body.immovable', true);
+      }
+
+      function checkIfCanJump() {
+        var yAxis = p2.vec2.fromValues(0, 1);
+        var result = false;
+        for (var i = 0; i < game.physics.p2.world.narrowphase.contactEquations.length; i++)    {
+          var c = game.physics.p2.world.narrowphase.contactEquations[i];
+          if (c.bodyA === player.body.data || c.bodyB === player.body.data) {
+            var d = p2.vec2.dot(c.normalA, yAxis); // Normal dot Y-axis
+            if (c.bodyA === player.body.data) d *= -1;
+            if (d > 0.5) result = true;
+          }
+        }
+        return result;
+      }
+
+    };
+
+    </script>
+
+    </body>
+</html>
